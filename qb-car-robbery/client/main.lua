@@ -44,7 +44,7 @@ end
 
 local function ControlPressed()
     CreateThread(function()
-        while true do
+        while isPlayerInsideZone do
             Wait(0)
             if isPlayerInsideZone then
                 if IsControlJustReleased(0, 38) then
@@ -55,6 +55,29 @@ local function ControlPressed()
                         TriggerServerEvent('server:payment', DeliveryLocation.Payment)
                         paid = true
                     end
+                end
+            end
+        end
+    end)
+end
+
+local function alertPolice()
+    CreateThread(function()
+        while VehicleTaken do
+            Wait(0)
+            local ped = PlayerPedId()
+            local pos = GetEntityCoords(ped)
+            if (VehicleTaken and not Delivered) then
+                Wait(1000)
+                local curVeh = GetVehiclePedIsIn(ped)
+                while curVeh == RobbedCar do
+                    Wait(1)
+                    if not Delivered then
+                        TriggerServerEvent('server:policeAlert', pos)
+                    end
+                    Wait(Config.copTimerIntervel * 1000)
+                    curVeh = GetVehiclePedIsIn(ped)
+                    pos = GetEntityCoords(ped)
                 end
             end
         end
@@ -92,8 +115,6 @@ local function spawnCar()
                 QBCore.Functions.TriggerCallback('server:GetCops', function(copsActive)
                     if (copsActive) then
                         DeliveryLocation = Config.Delivery[math.random(1, 5)]
-                        ClearAreaOfVehicles(Config.vehicleSpawnPoint.x, Config.vehicleSpawnPoint.y,
-                            Config.vehicleSpawnPoint.z, 10.0, false, false, false, false, false)
                         SetEntityAsNoLongerNeeded(RobbedCar)
                         DeleteVehicle(RobbedCar)
                         RemoveBlip(DeliveryBlip)
@@ -109,11 +130,13 @@ local function spawnCar()
                             RobbedCar = NetToVeh(netId)
                             exports['LegacyFuel']:SetFuel(RobbedCar, 100.0)
                             TaskWarpPedIntoVehicle(PlayerPedId(), RobbedCar, -1)
+                            SetVehicleNumberPlateText(RobbedCar, "ROBBED")
                             TriggerEvent("vehiclekeys:client:SetOwner", QBCore.Functions.GetPlate(RobbedCar))
                         end, vehiclehash, Config.vehicleSpawnPoint, true)
                         VehicleTaken = true
                         Delivered = false
                         paid = false
+                        alertPolice()
                         timer = Config.timer
                         TriggerServerEvent('server:update-activity', true)
                         --delivery blip
@@ -131,7 +154,6 @@ local function spawnCar()
                         EndTextCommandSetBlipName(DeliveryBlip)
                         --route
                         SetBlipRoute(DeliveryBlip, true)
-                        local coords = GetEntityCoords(ped)
                         TriggerServerEvent('server:policeNotification')
                         TriggerEvent('client:start-Police-Alert')
 
@@ -171,6 +193,7 @@ end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     createSpawnBlip(Config.spawnLocation)
+    BlipsLoaded = true
 end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
@@ -187,11 +210,42 @@ if not BlipsLoaded then
     BlipsLoaded = true
 end
 
+CreateThread(function()
+    exports['qb-target']:AddBoxZone("carSeller", Config.carSeller.targetZone, 1, 1, {
+        name = "carSeller",
+        heading = Config.carSeller.targetHeading,
+        debugPoly = false,
+        minZ = Config.carSeller.minZ,
+        maxZ = Config.carSeller.maxZ,
+    }, {
+        options = {
+            {
+                type = "client",
+                event = "client:start-robbery",
+                icon = "Fa fa-car",
+                label = "Talk To Seller",
+            },
+        },
+        distance = 1.0
+    })
+end)
+
+CreateThread(function()
+    RequestModel(GetHashKey(carSellerModel))
+    while (not HasModelLoaded(GetHashKey(carSellerModel))) do
+        Wait(1)
+    end
+    local carseller = CreatePed(1, carSellerHash, carSellerPos, false, true)
+    SetEntityInvincible(carseller, true)
+    SetBlockingOfNonTemporaryEvents(carseller, true)
+    FreezeEntityPosition(carseller, true)
+end)
+
 --player left car
 CreateThread(function()
     local ped = PlayerPedId()
     while true do
-        Wait(1)
+        Wait(0)
         if (VehicleTaken and not Delivered) then
             Wait(2000)
             ped = PlayerPedId()
@@ -216,53 +270,3 @@ CreateThread(function()
         end
     end
 end)
-
-CreateThread(function()
-    while true do
-        Wait(1)
-        local ped = PlayerPedId()
-        local pos = GetEntityCoords(ped)
-        if (VehicleTaken and not Delivered) then
-            Wait(1000)
-            local curVeh = GetVehiclePedIsIn(ped)
-            while curVeh == RobbedCar do
-                Wait(1)
-                if not Delivered then
-                    TriggerServerEvent('server:policeAlert', pos)
-                end
-                Wait(Config.copTimerIntervel * 1000)
-                curVeh = GetVehiclePedIsIn(ped)
-                pos = GetEntityCoords(ped)
-            end
-        end
-    end
-end)
-
-CreateThread(function()
-    RequestModel(GetHashKey(carSellerModel))
-    while (not HasModelLoaded(GetHashKey(carSellerModel))) do
-        Wait(1)
-    end
-    local carseller = CreatePed(1, carSellerHash, carSellerPos, false, true)
-    SetEntityInvincible(carseller, true)
-    SetBlockingOfNonTemporaryEvents(carseller, true)
-    FreezeEntityPosition(carseller, true)
-end)
-
-exports['qb-target']:AddBoxZone("carSeller", Config.carSeller.targetZone, 1, 1, {
-    name = "carSeller",
-    heading = Config.carSeller.targetHeading,
-    debugPoly = false,
-    minZ = Config.carSeller.minZ,
-    maxZ = Config.carSeller.maxZ,
-}, {
-    options = {
-        {
-            type = "client",
-            event = "client:start-robbery",
-            icon = "Fa fa-car",
-            label = "Talk To Seller",
-        },
-    },
-    distance = 1.0
-})
