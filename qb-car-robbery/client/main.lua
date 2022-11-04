@@ -4,8 +4,8 @@ local DeliveryLocation = {}
 local BlipsLoaded = false
 local SpawnBlip
 local DeliveryBlip
-local VehicleTaken = false
-local Delivered = false
+VehicleTaken = false
+Delivered = false
 local timer = Config.timer
 local carSellerPos = Config.carSeller.carSellerPos
 local carSellerModel = Config.carSeller.carSellerModel
@@ -31,20 +31,72 @@ local function removeBlip(blip)
     RemoveBlip(blip)
 end
 
+local function showTimer()
+    CreateThread(function()
+        while VehicleTaken and not Delivered do
+            Wait(1)
+            local curVeh = GetVehiclePedIsIn(ped)
+            if curVeh ~= RobbedCar then
+                local text = 'You have ~r~' .. timer .. '~s~ seconds to get back in car'
+                local pos = { 0.42, 0.11 }
+                SetTextFont(4)
+                SetTextProportional(1)
+                SetTextScale(0.55, 0.55)
+                SetTextColour(255, 255, 255, 255)
+                SetTextDropShadow(0, 0, 0, 0, 255)
+                SetTextEdge(1, 0, 0, 0, 255)
+                SetTextDropShadow()
+                SetTextOutline()
+                BeginTextCommandDisplayText('STRING')
+                AddTextComponentSubstringPlayerName(text)
+                EndTextCommandDisplayText(table.unpack(pos))
+            end
+        end
+    end)
+end
+
 local function stopRobbery()
     SetEntityAsNoLongerNeeded(RobbedCar)
     DeleteEntity(RobbedCar)
     RemoveBlip(DeliveryBlip)
     VehicleTaken = false
     Delivered = true
-    DeliveryZone = nil
+    DeliveryZone:destroy()
     timer = Config.timer
+    RobbedCar = 0
     TriggerServerEvent('server:update-activity', false)
+end
+
+--player left car
+local function listenExit()
+    showTimer()
+    CreateThread(function()
+        ped = PlayerPedId()
+        timer = Config.timer
+        while VehicleTaken and not Delivered do
+            Wait(1)
+            local curVeh = GetVehiclePedIsIn(ped)
+            if curVeh ~= RobbedCar then
+                Wait(1000)
+                if timer > 0 then
+                    timer = timer - 1
+                end
+                curVeh = GetVehiclePedIsIn(ped)
+                if (timer <= 0) then
+                    QBCore.Functions.Notify('Robbery Failed', 'error')
+                    stopRobbery()
+                    break
+                end
+            else
+                timer = Config.timer
+            end
+        end
+    end)
 end
 
 local function ControlPressed()
     CreateThread(function()
-        while isPlayerInsideZone do
+        while VehicleTaken and not Delivered and isPlayerInsideZone do
             Wait(0)
             if isPlayerInsideZone then
                 if IsControlJustReleased(0, 38) then
@@ -63,22 +115,16 @@ end
 
 local function alertPolice()
     CreateThread(function()
-        while VehicleTaken do
-            Wait(0)
-            local ped = PlayerPedId()
+        ped = PlayerPedId()
+        while VehicleTaken and not Delivered do
+            Wait(1000)
             local pos = GetEntityCoords(ped)
-            if (VehicleTaken and not Delivered) then
-                Wait(1000)
-                local curVeh = GetVehiclePedIsIn(ped)
-                while curVeh == RobbedCar do
-                    Wait(1)
-                    if not Delivered then
-                        TriggerServerEvent('server:policeAlert', pos)
-                    end
-                    Wait(Config.copTimerIntervel * 1000)
-                    curVeh = GetVehiclePedIsIn(ped)
-                    pos = GetEntityCoords(ped)
-                end
+            local curVeh = GetVehiclePedIsIn(ped)
+            if (curVeh == RobbedCar) then
+                TriggerServerEvent('server:policeAlert', pos)
+                Wait(Config.copTimerIntervel * 1000)
+                curVeh = GetVehiclePedIsIn(ped)
+                pos = GetEntityCoords(ped)
             end
         end
     end)
@@ -114,11 +160,11 @@ local function spawnCar()
             if cooldown <= 0 then
                 QBCore.Functions.TriggerCallback('server:GetCops', function(copsActive)
                     if (copsActive) then
-                        DeliveryLocation = Config.Delivery[math.random(1, 5)]
+                        DeliveryLocation = Config.Delivery[math.random(1, #Config.Delivery)]
                         SetEntityAsNoLongerNeeded(RobbedCar)
                         DeleteVehicle(RobbedCar)
                         RemoveBlip(DeliveryBlip)
-                        local car = DeliveryLocation.Cars[math.random(1, 5)]
+                        local car = DeliveryLocation.Cars[math.random(1, #DeliveryLocation.Cars)]
                         local vehiclehash = GetHashKey(car)
                         RequestModel(vehiclehash)
                         while not HasModelLoaded(vehiclehash) do
@@ -137,6 +183,7 @@ local function spawnCar()
                         Delivered = false
                         paid = false
                         alertPolice()
+                        listenExit()
                         timer = Config.timer
                         TriggerServerEvent('server:update-activity', true)
                         --delivery blip
@@ -211,6 +258,16 @@ if not BlipsLoaded then
 end
 
 CreateThread(function()
+
+    RequestModel(GetHashKey(carSellerModel))
+    while (not HasModelLoaded(GetHashKey(carSellerModel))) do
+        Wait(1)
+    end
+    local carseller = CreatePed(1, carSellerHash, carSellerPos, false, true)
+    SetEntityInvincible(carseller, true)
+    SetBlockingOfNonTemporaryEvents(carseller, true)
+    FreezeEntityPosition(carseller, true)
+
     exports['qb-target']:AddBoxZone("carSeller", Config.carSeller.targetZone, 1, 1, {
         name = "carSeller",
         heading = Config.carSeller.targetHeading,
@@ -228,45 +285,4 @@ CreateThread(function()
         },
         distance = 1.0
     })
-end)
-
-CreateThread(function()
-    RequestModel(GetHashKey(carSellerModel))
-    while (not HasModelLoaded(GetHashKey(carSellerModel))) do
-        Wait(1)
-    end
-    local carseller = CreatePed(1, carSellerHash, carSellerPos, false, true)
-    SetEntityInvincible(carseller, true)
-    SetBlockingOfNonTemporaryEvents(carseller, true)
-    FreezeEntityPosition(carseller, true)
-end)
-
---player left car
-CreateThread(function()
-    local ped = PlayerPedId()
-    while true do
-        Wait(0)
-        if (VehicleTaken and not Delivered) then
-            Wait(2000)
-            ped = PlayerPedId()
-            local curVeh = GetVehiclePedIsIn(ped)
-            timer = Config.timer
-            while curVeh ~= RobbedCar do
-                Wait(1)
-                if not Delivered then
-                    QBCore.Functions.Notify('Get Back in Car Within ' .. timer .. ' Seconds', 'error')
-                    Wait(10000)
-                    if timer > 0 then
-                        timer = timer - 10
-                    end
-                    curVeh = GetVehiclePedIsIn(ped)
-                    if (timer <= 0) then
-                        QBCore.Functions.Notify('Robbery Failed', 'error')
-                        stopRobbery()
-                        break
-                    end
-                end
-            end
-        end
-    end
 end)
