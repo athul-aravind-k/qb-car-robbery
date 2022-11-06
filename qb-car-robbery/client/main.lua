@@ -245,7 +245,6 @@ end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     removeBlip(SpawnBlip)
-    stopRobbery()
 end)
 
 RegisterNetEvent('client:start-robbery', function()
